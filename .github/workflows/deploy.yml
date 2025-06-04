@@ -1,0 +1,90 @@
+# Implicitly requires the IAM_GITHUB_ROLE_ARN secret to be set for the target environment.
+# If the target environment is live, the PREPROD_IAM_GITHUB_ROLE_ARN secret must also set.
+
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      deploy_environment:
+        required: true
+        type: string
+        description: The environment to deploy to, e.g., dev2, int, live
+      version:
+        required: true
+        type: string
+      app_name_with_env:
+        required: true
+        type: string
+        description: The app name with the environment prepended, e.g., int2-applications-api
+      ecr_repo:
+        required: true
+        type: string
+        description: The ECR repository name, e.g., applications-api-repo
+
+# Needed for OIDC authentication to AWS
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  copy-preprod-image-to-live:
+    if: inputs.deploy_environment == 'live'
+    uses: communitiesuk/eip-ero-shared-workflows/.github/workflows/copy-preprod-image-to-prod.yml@main
+    with:
+      version: ${{ github.ref_name }}
+      ecr_repo: ${{ inputs.ecr_repo }}
+
+  deployment:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.deploy_environment }}
+    # Should run this if the copy-preprod-image-to-live step is skipped as not always needed
+    # Avoid using always() as failures or cancellations should not require this step to run
+    if: ${{ !failure() && !cancelled() }}
+    needs: copy-preprod-image-to-live
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.IAM_GITHUB_ROLE_ARN }}
+          role-session-name: ${{ github.run_id }}
+          aws-region: eu-west-2
+
+      # Note that the base Task Definition is managed by Terraform
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition "${{ inputs.app_name_with_env }}-ecs-task-definition" \
+          --query taskDefinition > task-definition.json
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ inputs.app_name_with_env }}-ecs-container
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repo }}:${{ inputs.version }}
+
+      - name: Update appspec file for environment
+        uses: jacobtomlinson/gha-find-replace@v2
+        with:
+          find: "{env}"
+          replace: ${{ inputs.deploy_environment }}
+          include: "**/appspec.yaml"
+          regex: false
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ inputs.app_name_with_env }}-ecs-service
+          cluster: ${{ inputs.app_name_with_env }}-ecs-cluster
+          wait-for-service-stability: true
+          codedeploy-appspec: ${{ github.workspace }}/.github/workflows/files/appspec.yaml
+          codedeploy-application: ${{ inputs.app_name_with_env }}
+          codedeploy-deployment-group: ${{ inputs.app_name_with_env }}-deployment-group

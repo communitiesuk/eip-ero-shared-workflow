@@ -1,0 +1,49 @@
+# Implicitly requires the PREPROD_IAM_GITHUB_ROLE_ARN secret to be set for the repository (not in any environment)
+
+name: Build and Test
+
+on:
+  workflow_call:
+
+# Needed for OIDC authentication to AWS
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      LOCALSTACK_API_KEY: ${{ secrets.LOCALSTACK_API_KEY }}
+      AWS_REGION: eu-west-2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Installing JDK needs to come after checking out the repo because
+      # the action (setup-java) looks for the Gradle wrapper files
+      - name: Install JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: corretto
+          java-version: 17
+          cache: gradle
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PREPROD_IAM_GITHUB_ROLE_ARN }}
+          role-session-name: ${{ github.run_id }}
+          aws-region: eu-west-2
+
+      - name: Run gradle `check` to lint source code and run tests
+        env:
+          AWS_PROFILE_ARG: ""
+        run: ./gradlew clean check --no-daemon
+
+      - name: Save logs on test failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Test logs
+          path: build/reports/tests/test
