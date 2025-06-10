@@ -34,6 +34,7 @@ jobs:
     with:
       version: ${{ github.ref_name }}
       ecr_repo: ${{ inputs.ecr_repo }}
+    secrets: inherit
 
   deployment:
     runs-on: ubuntu-latest

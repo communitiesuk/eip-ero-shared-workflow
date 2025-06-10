@@ -80,3 +80,4 @@ jobs:
       image_name: ${{ inputs.image_name }}
       ecr_repo: ${{ inputs.ecr_repo }}
       preprod_deploy_environment: dev2
+    secrets: inherit

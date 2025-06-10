@@ -56,6 +56,7 @@ jobs:
       image_name: ${{ inputs.image_name }}
       ecr_repo: ${{ inputs.ecr_repo }}
       preprod_deploy_environment: dev2
+    secrets: inherit
 
   deploy:
     needs:
@@ -67,3 +68,4 @@ jobs:
       version: ${{ needs.tag.outputs.version }}
       app_name_with_env: ${{ inputs.app_name_dev2_prefix }}
       ecr_repo: ${{ inputs.ecr_repo }}
+    secrets: inherit
